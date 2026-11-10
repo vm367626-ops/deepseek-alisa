@@ -1,0 +1,8 @@
+meta:
+  environment: python
+  toolchain:
+    name: pip
+    version: 3.10
+run:
+  command: uvicorn main:app --host 0.0.0.0 --port 5000
+  containerPort: 5000
