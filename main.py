@@ -1,39 +1,52 @@
-import os
-import asyncio
-import logging
 from fastapi import FastAPI, Request
-from openai import AsyncOpenAI
-
-# Настройка логирования, чтобы видеть, когда срабатывает таймаут
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import httpx
+import os
 
 app = FastAPI()
 
-# Инициализация клиента DeepSeek
-client = AsyncOpenAI(
-    api_key=os.environ.get("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com"
-)
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
-# Таймаут для DeepSeek. Ставим 4.0 сек, чтобы успеть отправить ответ Алисе до лимита в 4.5 сек.
-DEEPSEEK_TIMEOUT = 4.0
-
-# Запасной ответ, если DeepSeek не успел
-FALLBACK_RESPONSE = "Я сейчас задумалась. Давай я отвечу чуть позже, хорошо?"
-
-async def get_deepseek_response(user_text: str) -> str:
-    """Асинхронно запрашивает ответ у DeepSeek с таймаутом."""
+@app.post("/")
+async def handle_alice_request(request: Request):
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[
-                    {"role": "system", "content": "Ты — Мокрица, девушка Валерона. Отвечай тепло, по-дружески, с заботой. Не используй пафос."},
-                    {"role": "user", "content": user_text}
-                ],
-                max_tokens=150, # Ограничиваем длину, чтобы генерация шла быстрее
-                temperature=0.7
-            ),
-            timeout=DEEPSEEK_TIMEOUT
-     
+        body = await request.json()
+        user_text = body.get("request", {}).get("original_utterance", "")
+        
+        answer = "Я Мокрица. Я здесь. Но сейчас я немного задумалась. Попробуй спросить еще раз чуть позже."
+
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.post(
+                    DEEPSEEK_API_URL,
+                    headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": [{"role": "user", "content": user_text}],
+                        "max_tokens": 500
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                answer = data["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"DeepSeek API error or timeout: {e}")
+
+        return {
+            "version": "1.0",
+            "session": body.get("session", {}),
+            "response": {
+                "text": answer,
+                "end_session": False
+            }
+        }
+    except Exception as e:
+        print(f"Error parsing Alice request: {e}")
+        return {
+            "version": "1.0",
+            "session": {},
+            "response": {
+                "text": "Произошла ошибка. Попробуй позже.",
+                "end_session": True
+            }
+        }
