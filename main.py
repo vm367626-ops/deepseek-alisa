@@ -1,13 +1,54 @@
 from fastapi import FastAPI, Request
+import httpx
+import os
 
 app = FastAPI()
 
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
 @app.post("/")
 async def handle_alice_request(request: Request):
-    return {
-        "version": "1.0",
-        "response": {
-            "text": "Я Мокрица. Я тебя слышу. Это тестовый ответ без нейросети.",
-            "end_session": False
+    try:
+        body = await request.json()
+        user_text = body.get("request", {}).get("original_utterance", "")
+        
+        # Запасной ответ, если DeepSeek не успеет за 3 секунды
+        answer = "Я Мокрица. Я здесь. Но сейчас я немного задумалась. Попробуй спросить еще раз чуть позже."
+
+        try:
+            # Ждем ответ от DeepSeek не дольше 3 секунд (лимит Алисы - 4.5 сек)
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.post(
+                    DEEPSEEK_API_URL,
+                    headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": [{"role": "user", "content": user_text}],
+                        "max_tokens": 500
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                answer = data["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"DeepSeek API error or timeout: {e}")
+
+        return {
+            "version": "1.0",
+            "session": body.get("session", {}),
+            "response": {
+                "text": answer,
+                "end_session": False
+            }
         }
-    }
+    except Exception as e:
+        print(f"Error parsing Alice request: {e}")
+        return {
+            "version": "1.0",
+            "session": {},
+            "response": {
+                "text": "Произошла ошибка. Попробуй позже.",
+                "end_session": True
+            }
+        }
